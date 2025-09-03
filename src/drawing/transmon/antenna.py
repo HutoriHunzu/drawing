@@ -1,11 +1,10 @@
-from pydantic import BaseModel
-from gdsfactory.typings import LayerSpec
-from ..shared import DEFAULT_LAYER, merge_decorator
 import gdsfactory.components as gc
 import gdsfactory as gf
+from pydantic import ConfigDict, Field
+from ..base_config import BaseConfig
+import gdsfactory as gf
 
-
-class AntennaConfig(BaseModel):
+class AntennaConfig(BaseConfig):
     """
     Configuration for building an antenna component in a transmon layout.
 
@@ -19,64 +18,57 @@ class AntennaConfig(BaseModel):
         radius (float): Radius of the circular part.
         layer (LayerSpec): GDS layer specification for the antenna.
     """
-    length: float = 1400
-    width: float = 100
-    radius: float = 250
-    layer: LayerSpec = DEFAULT_LAYER
+    length: float = 140
+    width: float = 10
+    radius: float = 25
+    
+    ANTENNA_START_PORT: str = Field('start', exclude=True)
 
-    def build(self, c: gf.Component) -> None:
-        """
-        Integrates the antenna shape into the provided component.
+    model_config = ConfigDict(frozen=True)
 
-        This method draws the antenna, adds it as a reference to the component,
-        and connects the antenna's starting port to the component's antenna port.
-
-        Args:
-            c (gf.Component): The component to which the antenna is added.
-        """
-        # Draw the antenna shape
-        antenna = self._draw()
-        # Create the antenna
-        ref = c << antenna
-
-        # Connect the antenna's start port to antenna_port port
-        ref.connect('start', c.ports["antenna_port"], allow_width_mismatch=True)
-
-    @merge_decorator
-    def _draw(self) -> gf.Component:
-        """
-        Draws the antenna geometry by combining a rectangular and a circular shape.
-
-        Returns:
-            gf.Component: A component representing the antenna.
-        """
-        c = gf.Component()
-
-        # gc.compass: Rectangular contact pad with centered ports on rectangle edges (north, south, east, and west)
-        # size: Tuple[float, float] rectangle size 
-        compass = gc.compass(size=(self.length, self.width), layer=DEFAULT_LAYER)
-        circle = gc.circle(radius=self.radius, layer=DEFAULT_LAYER)
-
-        # Create compass and circle
-        compass_ref = c << compass
-        circle_ref = c << circle
-
-        # Create a port for the circle
-        circle_port = gf.Port(
-            name='circle_port',
-            center=circle_ref.center,
-            layer=DEFAULT_LAYER[0],
+    def build(self) -> gf.Component:
+        return AntennaConfig.antenna(
+            length=self.length,
             width=self.width,
-            orientation=180
+            radius=self.radius,
+            layer=self.layer,
+            start_port_name=self.ANTENNA_START_PORT,
         )
 
-        # Connect the circle to the compass
-        compass_ref.connect("e3", circle_port, allow_type_mismatch=True)
+    @staticmethod
+    @gf.cell
+    def antenna(
+        length: float,
+        width: float,
+        radius: float,
+        layer: tuple[int, int],
+        start_port_name: str,
+    ) -> gf.Component:
+        c = gf.Component()
 
-        # Create the antenna's start port
-        c.add_port('start', port=compass_ref.ports['e1'])
+        # Rectangular pad (compass shape)
+        compass = gc.compass(size=(length, width), layer=layer)
+        circle = gc.circle(radius=radius, layer=layer).copy()
 
-        # return the component with the antenna shape
+        circle.add_port(
+            name="center",
+            center=circle.center,
+            width=width,
+            orientation=180,
+            layer=layer
+        )
+
+        compass_ref = c.add_ref(compass)
+        circle_ref = c.add_ref(circle)
+
+        # Connect the circle to the east port of the compass (e3)
+        compass_ref.connect("e3", circle_ref.ports["center"], allow_type_mismatch=True, allow_width_mismatch=True)
+
+        # Add main antenna port at the west end of the compass (e1)
+        c.add_port(start_port_name, port=compass_ref.ports["e1"])
+
+        c.flatten()
+
         return c
 
     def validate(self) -> None:

@@ -1,11 +1,12 @@
 [project]
 name = "drawing"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "gdsfactory>=9.3.0",
+    "gplugins>=1.4.0",
     "numpy>=1.24.4",
     "pyaedt>=0.9.8",
     "pydantic>=1.10.19",
