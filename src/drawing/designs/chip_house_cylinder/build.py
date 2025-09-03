@@ -1,7 +1,7 @@
 from ansys.aedt.core.hfss import Hfss
 
 from src.drawing.designs.chip_house_cylinder.config import ChipHouseCylinderConfig, Variable
-from src.drawing.meader.euler import meander_euler
+from src.drawing.meander.euler import meander_euler
 from src.drawing.export_to_pyaedt.parser import parse_component, ExportConfig
 
 
