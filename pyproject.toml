@@ -11,6 +11,3 @@ dependencies = [
     "pydantic>=1.10.19",
     "shapely>=2.0.6",
 ]
-
-[tool.hatch.metadata]
-allow-direct-references = true
