@@ -15,8 +15,13 @@ Coordinate = Tuple[float, float]
 Size = Tuple[float, float]
 
 DEFAULT_LAYER = (1, 0)
+DEFAULT_WAFER_LAYER = (60, 0)
 JUNCTION_FOCUS_LAYER = (33, 0)
+JUNCTION_PICTURE_LAYER = (50, 0)
+SAMPLE_AREA_INDICATOR_LAYER = (40, 0)
 DEFAULT_NUM_POINTS = 300
+
+ONE_INCH_IN_MICROMETER = 25400
 
 
 @gf.cell
@@ -89,3 +94,59 @@ def merge_decorator(func):
         c = func(*args, **kwargs)
         return merge_referenced_shapes(c)
     return foo
+
+@gf.cell
+def array_mirror_x(
+    component: gf.Component,
+    mirror_distance: float = 0,
+    rows: int = 1,
+    column_pitch: float = 200,
+    row_pitch: float = 200,
+) -> gf.Component:
+    """
+    Args:
+        cols: number of columns.
+        rows: number of rows.
+        column_pitch: distance between columns.
+        row_pitch: distance between rows.
+        pad: pad cell.
+    """
+    m = gf.Component()
+    component_ref = m << component
+    copy_ref = m << component.copy().mirror_x()
+
+    copy_ref.movex((component_ref.xmax - copy_ref.xmin) + mirror_distance)
+
+    c = gf.Component()
+    c.add_ref(
+        m, columns=1, rows=rows, column_pitch=(column_pitch + copy_ref.xsize), row_pitch=(row_pitch + copy_ref.ysize)
+    )
+    return c
+
+@gf.cell
+def array_mirror_y(
+    component: gf.Component,
+    mirror_distance: float = 0,
+    cols: int = 1,
+    column_pitch: float = 200,
+    row_pitch: float = 200,
+) -> gf.Component:
+    """
+    Args:
+        cols: number of columns.
+        rows: number of rows.
+        column_pitch: distance between columns.
+        row_pitch: distance between rows.
+        pad: pad cell.
+    """
+    m = gf.Component()
+    component_ref = m << component
+    copy_ref = m << component.copy().mirror_y()
+
+    copy_ref.movey((component_ref.ymax - copy_ref.ymin) + mirror_distance)
+
+    c = gf.Component()
+    c.add_ref(
+        m, columns=cols, rows=1, column_pitch=(column_pitch + copy_ref.ysize), row_pitch=(row_pitch + copy_ref.xsize)
+    )
+    return c

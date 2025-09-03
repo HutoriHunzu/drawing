@@ -6,5 +6,5 @@ src/drawing/transmon/junctions/__pycache__/*
 
 gds_files/*
 
-# Ignore Python files in the root directory
-#*.py
+*.pyc 
+test.py

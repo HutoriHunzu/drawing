@@ -1,25 +1,28 @@
-from drawing.transmon.junctions.base_junction import BaseJunction
-from .pads import PadConfig
-from .tapers import TaperConfig
-from .antenna import AntennaConfig
-from .junctions import SupportedJunctions, RegularJunction, JunctionAdapter
-from gdsfactory.typings import LayerSpec
-from pydantic import BaseModel
+from drawing.junction import BaseJunctionConfig, SymmetricJunctionConfig
+from drawing.shared.utilities import JUNCTION_PICTURE_LAYER
 import gdsfactory as gf
 import gdsfactory.components as gc
-from ..shared import DEFAULT_LAYER, smooth_corners, merge_referenced_shapes
+from ..shared import smooth_corners, merge_referenced_shapes
 from typing import TypeVar, Type
 import matplotlib.pyplot as plt
 from typing_extensions import Self
-from pydantic import model_validator
+from pydantic import ConfigDict, Field, model_validator
+from pydantic import computed_field
+from pyparsing import cached_property
+from ..base_config import BaseConfig
+from . import TaperConfig, PadConfig
+from .antenna import AntennaConfig
+import gdsfactory as gf
 
 
-class IntegrationConfig(BaseModel):
+class IntegrationConfig(BaseConfig):
     feature_radius: float = 10.0
     use_antenna: bool = True
 
+    model_config = ConfigDict(frozen=True)
 
-T = TypeVar('T', bound=BaseModel)
+
+T = TypeVar('T', bound=BaseConfig)
 
 
 def load_relevant_parameters(parameters: dict, cls: Type[T], with_prefix: str = None) -> T:
@@ -42,141 +45,111 @@ def create_nested_from_flat_by_prefix(prefixes: list[str], d: dict):
     return result
 
 
-class TransmonConfig(BaseModel):
+class TransmonConfig(BaseConfig):
     """
-    Configuration for constructing a complete transmon layout using GDSFactory.
-
-    This configuration encapsulates parameters for integrating pads, tapers, junctions,
-    and an optional antenna. It manages shape merging, smoothing of corners, and the overall
-    connectivity required to build a transmon component.
-
-    Attributes:
-        integration_config (IntegrationConfig): Settings controlling integration features
-            such as feature radius and antenna usage.
-        pad (PadConfig): Configuration parameters for pad dimensions and layout.
-        taper (TaperConfig): Configuration for taper shapes.
-        junction (SupportedJunctions): Junction configuration that connects tapers to pads.
-            Defaults to a regular junction.
-        antenna (AntennaConfig): Configuration for the optional antenna shape.
-        layer (LayerSpec): GDS layer specification applied to all components.
     """
     integration_config: IntegrationConfig = IntegrationConfig()
     pad: PadConfig = PadConfig()
     taper: TaperConfig = TaperConfig()
-    junction: BaseJunction = RegularJunction()
+    junction: BaseJunctionConfig = SymmetricJunctionConfig(layer=(11,11))
     antenna: AntennaConfig = AntennaConfig()
-    layer: LayerSpec = DEFAULT_LAYER
-    validate_assignment: bool = True
+    validate_assignment: bool = Field(False, exclude=True)
+
+    juction_taper_overlap: float = 3
+
+    junction_box_image_add_top: float = 2
+    junction_box_image_add_bottom: float = 2
+    junction_box_image_add_left: float = 1
+    junction_box_image_add_right: float = 1
+
+    model_config = ConfigDict(frozen=True)
 
     def build(self) -> gf.Component:
-        """
-        Builds the complete transmon component.
+        return TransmonConfig.transmon(
+            # integration_config=self.integration_config,
+            pad=self.pad.build().copy(),
+            taper=self.taper.build().copy(),
+            junction=self.junction.build().copy(),
+            antenna=self.antenna.build().copy(),
+            layer=self.layer,
+            juction_taper_overlap=self.juction_taper_overlap,
+            taper_narrow_width=self.taper.narrow_width,
+            pad_width=self.pad.width,
 
-        This method performs the following steps:
-          1. Constructs pads and tapers.
-          2. Optionally builds and connects an antenna.
-          3. Uses the junction configuration to connect tapers to pads.
-          4. Merges and smooths shapes as specified in the integration configuration.
+            
+            junction_right_connecting_port=self.junction.RIGHT_CONNECTING_PORT_NAME,
+            junction_left_connecting_port=self.junction.LEFT_CONNECTING_PORT_NAME,
+            pad_right_connecting_port=self.pad.RIGHT_CONNECTING_PORT_NAME,
+            taper_wide_connecting_port=self.taper.WIDE_CONNECTING_PORT_NAME,
+            taper_narrow_connecting_port=self.taper.NARROW_CONNECTING_PORT_NAME,
+            antenna_start_port=self.antenna.ANTENNA_START_PORT,
 
-        Returns:
-            gf.Component: The finalized transmon component with merged and smoothed shapes.
-        """
+            junction_box_image_add_top=self.junction_box_image_add_top,
+            junction_box_image_add_bottom=self.junction_box_image_add_bottom,
+            junction_box_image_add_left=self.junction_box_image_add_left,
+            junction_box_image_add_right=self.junction_box_image_add_right
+        )
+
+    @gf.cell
+    @staticmethod
+    def transmon(
+        # integration_config: IntegrationConfig,
+        pad: gf.Component,
+        taper: gf.Component,
+        junction: gf.Component,
+        antenna: gf.Component,
+        layer,
+        juction_taper_overlap: float,
+        junction_right_connecting_port: str,
+        junction_left_connecting_port: str,
+        pad_right_connecting_port: str,
+        taper_wide_connecting_port: str,
+        taper_narrow_connecting_port: str,
+        antenna_start_port: str ,
+        taper_narrow_width: float,
+        pad_width: float,
+        junction_box_image_add_top: float,
+        junction_box_image_add_bottom: float,
+        junction_box_image_add_left: float,
+        junction_box_image_add_right: float
+    ) -> gf.Component:
+        pt = gf.Component()
+
+        pad_ref = pt << pad
+        taper_ref = pt << taper
+
+        pad_ref.connect(pad_right_connecting_port, taper_ref.ports[taper_wide_connecting_port], allow_width_mismatch=True)
+
+
+        pt = smooth_corners(merge_referenced_shapes(pt)).copy()
+        
+        pt_right = pt.copy().mirror_x()
+
+        pt_right.add_port(name="right_junction_connection", center=(pt_right.xmin,0), width=taper_narrow_width, orientation=180, layer=layer, port_type="electrical")
+        pt_right.add_port(name="antenna_connection", center=(pt_right.xmax,0), width=pad_width, layer=layer, port_type="electrical")
+
+        pt.add_port(name="left_junction_connection", port=taper_ref.ports[taper_narrow_connecting_port])
+
         c = gf.Component()
 
-        # Build pads 
-        left_pad, right_pad = self.pad.build(c)
+        pt_right_ref = c << pt_right
+        pt_left_ref = c << pt
 
-        # Build tapers
-        left_taper, right_taper = self.taper.build(c)
+        junction_ref = c << junction
 
+        c << gf.components.bbox(junction_ref, layer=JUNCTION_PICTURE_LAYER, top=junction_box_image_add_top, bottom=junction_box_image_add_bottom, right=junction_box_image_add_right, left=junction_box_image_add_left)
 
-        # Optionally add the antenna to the layout.
-        if self.integration_config.use_antenna:
-            self.antenna.build(c)
+        pt_left_ref.connect("left_junction_connection", junction_ref.ports[junction_right_connecting_port], allow_layer_mismatch=True)
+        pt_right_ref.connect("right_junction_connection", junction_ref.ports[junction_left_connecting_port], allow_layer_mismatch=True)
 
+        pt_left_ref.movex(-juction_taper_overlap)
+        pt_right_ref.movex(juction_taper_overlap)
 
-        # Connect tapers to pads using the junction configuration.
-        self.junction.connect_tapers_to_pads(left_pad, right_pad, left_taper, right_taper)
+        antenna_ref = c << antenna
 
+        antenna_ref.connect(antenna_start_port, pt_right_ref.ports["antenna_connection"], allow_width_mismatch=True)
 
-        # Merge and smooth the shapes if needed.
-        c = self.smooth_and_merge(c, left_taper, right_taper)
-        c = self.junction.build(c)
-
-        return merge_referenced_shapes(c)
-
-    def smooth_and_merge(self, c: gf.Component, left_taper, right_taper) -> gf.Component:
-        """
-        Applies smoothing and shape merging to the component.
-
-        If a positive feature radius is set in the integration configuration, the function
-        creates new ports based on the tapers’ narrow ends, merges shapes, and smooths the corners.
-        Otherwise, it directly adds the taper ports.
-
-        Args:
-            c (gf.Component): The component to process.
-            left_taper: The left taper sub-component.
-            right_taper: The right taper sub-component.
-
-        Returns:
-            gf.Component: The processed component with updated ports and merged shapes.
-        """
-        if self.integration_config.feature_radius > 0:
-            # Adjust left port coordinates.
-            port = left_taper.ports['narrow_end']
-            center = port.center
-            center = (center[0] - self.integration_config.feature_radius / 2, center[1])
-            width = port.width
-            c.add_port(
-                'left_narrow_end',
-                center=center,
-                port_type='electrical',
-                layer=self.layer,
-                width=width,
-                orientation=0
-            )
-
-            # Adjust right port coordinates.
-            port = right_taper.ports['narrow_end']
-            center = port.center
-            center = (center[0] + self.integration_config.feature_radius / 2, center[1])
-            width = port.width
-            c.add_port(
-                'right_narrow_end',
-                center=center,
-                port_type='electrical',
-                layer=self.layer,
-                width=width,
-                orientation=180
-            )
-
-            c = merge_referenced_shapes(c)
-            c = smooth_corners(c, radius=self.integration_config.feature_radius)
-
-            # Add a compass to sharpen the end connections.
-            w = gf.Component()
-            compass = gc.compass(
-                (self.integration_config.feature_radius / 2, self.taper.narrow_width),
-                layer=self.layer
-            )
-            ref = w << c
-            left_ref = w << compass
-            right_ref = w << compass
-
-            left_ref.connect('e1', ref.ports['left_narrow_end'])
-            right_ref.connect('e3', ref.ports['right_narrow_end'])
-
-            # Preserve existing ports except for the narrow_end ports.
-            w.add_ports([p for p in ref.ports if p.name not in ('left_narrow_end', 'right_narrow_end')])
-            w.add_port('left_narrow_end', port=left_ref.ports['e3'])
-            w.add_port('right_narrow_end', port=right_ref.ports['e1'])
-
-            return merge_referenced_shapes(w)
-
-        # When no smoothing is required, simply propagate the taper ports.
-        c.add_port('left_narrow_end', port=left_taper.ports['narrow_end'])
-        c.add_port('right_narrow_end', port=right_taper.ports['narrow_end'])
-        return merge_referenced_shapes(c)
+        return merge_referenced_shapes(c.mirror_x())
 
     @classmethod
     def load_from_flat_dict(cls, d: dict) -> "TransmonConfig":
@@ -218,38 +191,4 @@ class TransmonConfig(BaseModel):
         self.junction.validate()
         self.antenna.validate()
 
-        # pad-taper validation
-        #-------------------------------------------------------------------
-        if self.pad.distance < self.taper.length * 2:
-            raise ValueError(
-                f"Pad distance {self.pad.distance} must be greater than the taper length (2x) {self.taper.length * 2} "
-            )
-        
-        if self.pad.width < self.taper.narrow_width:
-            raise ValueError(
-                f"Pad width {self.pad.width} must be greater than the taper narrow width {self.taper.narrow_width}"
-            )
-        
-        # taper-taper validation
-        #-------------------------------------------------------------------
-        if self.taper.wide_width < self.taper.narrow_width:
-            raise ValueError(
-                f"Taper wide width {self.taper.wide_width} must be greater than the taper narrow width {self.taper.narrow_width}"
-            )
-        
-
-        # taper-junction validation
-        #-------------------------------------------------------------------
-        if self.taper.narrow_width < self.junction.width:
-            raise ValueError(
-                f"Taper narrow width {self.taper.narrow_width} must be greater than the junction width {self.junction.width}"
-            )
-        
-        # pads-taper-junction validation
-        #-------------------------------------------------------------------
-        if self.pad.distance < self.junction.length + self.junction.gap + self.taper.length * 2:
-            raise ValueError(
-                f"Pad distance {self.pad.distance} must be greater than the junction length {self.junction.length} "
-                f"plus taper length (2x) {self.taper.length * 2}"
-            )
         return self
